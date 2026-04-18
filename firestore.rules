@@ -1,0 +1,74 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Document ID: {uid}
+// Fields:
+//   - uid: string (required) - Firebase Auth UID
+//   - email: string (required) - User email address
+//   - displayName: string (optional) - User's name
+//   - photoURL: string (optional) - User's avatar URL
+//   - createdAt: timestamp (required) - Account creation date
+//   - lastLogin: timestamp (optional) - Last login date
+//   - role: string (required, default: 'client') - User's access role
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+    
+    function isValidUser(data) {
+      return data.uid == request.auth.uid &&
+             isValidEmail(data.email) &&
+             data.role == 'client' && // Only allow 'client' role on self-creation
+             data.createdAt == request.time;
+    }
+
+    // ===============================================================
+    // Default Deny
+    // ===============================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ===============================================================
+    // Users Collection
+    // ===============================================================
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      
+      allow create: if isOwner(userId) && 
+                      hasRequiredFields(['uid', 'email', 'role', 'createdAt']) &&
+                      isValidUser(request.resource.data);
+                      
+      allow update: if isOwner(userId) && 
+                      request.resource.data.uid == resource.data.uid &&
+                      request.resource.data.email == resource.data.email &&
+                      request.resource.data.role == resource.data.role && // Role immutable for user
+                      request.resource.data.createdAt == resource.data.createdAt; // CreatedAt immutable
+    }
+  }
+}
